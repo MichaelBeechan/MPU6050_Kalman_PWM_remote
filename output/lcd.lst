@@ -1,0 +1,82 @@
+C51 COMPILER V8.02   LCD                                                                   12/28/2013 10:57:35 PAGE 1   
+
+
+C51 COMPILER V8.02, COMPILATION OF MODULE LCD
+OBJECT MODULE PLACED IN .\output\lcd.obj
+COMPILER INVOKED BY: d:\Keil\C51\BIN\C51.EXE src\lcd.c BROWSE DEBUG OBJECTEXTEND PRINT(.\output\lcd.lst) OBJECT(.\output
+                    -\lcd.obj)
+
+line level    source
+
+   1          #include "LCD1602.h"
+   2          
+   3          void delay_50us(uint t)     //ºÁÃë¼¶ÑÓÊ±º¯Êý
+   4          {
+   5   1              unsigned int j;
+   6   1              for(;t>0;t--)
+   7   1              for(j=19;j>0;j--);
+   8   1      }
+   9          void write_com(uchar com)
+  10          {
+  11   1              EN=0;
+  12   1              RS=0;
+  13   1              RW=0;
+  14   1              P0=com;
+  15   1              delay_50us(10);
+  16   1              EN=1;
+  17   1              delay_50us(20);
+  18   1              EN=0;
+  19   1      }
+  20          
+  21          void write_data(uchar dat)
+  22          {
+  23   1              EN=0;
+  24   1              RS=1;
+  25   1              RW=0;
+  26   1              P0=dat;
+  27   1              delay_50us(10);
+  28   1              EN=0x01;
+  29   1              delay_50us(20);
+  30   1              EN=0;
+  31   1      }
+  32          
+  33          void init_1602(void)
+  34          {
+  35   1              delay_50us(300);
+  36   1              write_com(0x38);
+  37   1              delay_50us(100);
+  38   1              write_com(0x38);
+  39   1              delay_50us(100);
+  40   1              write_com(0x38);
+  41   1              
+  42   1              write_com(0x08);
+  43   1              write_com(0x01);
+  44   1              write_com(0x06);
+  45   1              write_com(0x0c);
+  46   1      }
+  47           /*void disp_ascill(uchar *dat,uchar loc,uchar len)
+  48           {
+  49               uchar ii;
+  50                   write_com(loc);
+  51                   for(ii=0;ii<len;ii++)
+  52                   {
+  53                       write_data(dat[ii]);
+  54                   }
+C51 COMPILER V8.02   LCD                                                                   12/28/2013 10:57:35 PAGE 2   
+
+  55           } */
+  56          
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    109    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

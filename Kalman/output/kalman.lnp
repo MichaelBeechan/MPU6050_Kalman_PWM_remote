@@ -1,0 +1,4 @@
+".\output\kalman.obj",
+".\output\lcd.obj" 
+TO ".\output\kalman" 
+PRINT(".\output\kalman.m51") RAMSIZE(256) 

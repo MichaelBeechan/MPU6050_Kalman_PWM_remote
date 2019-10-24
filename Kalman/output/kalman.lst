@@ -1,0 +1,288 @@
+C51 COMPILER V8.02   KALMAN                                                                12/15/2013 11:12:32 PAGE 1   
+
+
+C51 COMPILER V8.02, COMPILATION OF MODULE KALMAN
+OBJECT MODULE PLACED IN .\output\kalman.obj
+COMPILER INVOKED BY: d:\Keil\C51\BIN\C51.EXE src\kalman.c BROWSE DEBUG OBJECTEXTEND PRINT(.\output\kalman.lst) OBJECT(.\
+                    -output\kalman.obj)
+
+line level    source
+
+   1          #include <REG52.H>      
+   2          #include <math.h>     
+   3          #include <stdio.h>   
+   4          #include <INTRINS.H>
+   5          
+   6          typedef unsigned char  uchar;
+   7          typedef unsigned short ushort;
+   8          typedef unsigned int   uint;
+   9          
+  10          //******功能模块头文件*******
+  11          
+  12          #include "MPU6050.H"            //MPU6050头文件
+  13          #include "LCD1602.H"
+  14          
+  15          uchar dis[4];
+  16          int     Temperature,Temp_h,Temp_l;      //温度及高低位数据
+  17          //******角度参数************
+  18              float Gyro_y;        //Y轴陀螺仪数据暂存
+  19                  float Angle_gy;      //由角速度计算的倾斜角度
+  20                  float Accel_x;       //X轴加速度值暂存
+  21                  float Angle_ax;      //由加速度计算的倾斜角度
+  22                  float Angle;         //小车最终倾斜角度
+  23                  uchar value;             //角度正负极性标记     
+  24          
+  25          
+  26          //******卡尔曼参数************
+  27                          
+  28          float code Q_angle=0.001;  
+  29          float code Q_gyro=0.003;
+  30          float code R_angle=0.5;
+  31          float code dt=0.01;                       //dt为kalman滤波器采样时间;
+  32          char  code C_0 = 1;
+  33          float xdata Q_bias, Angle_err;
+  34          float xdata PCt_0, PCt_1, E;
+  35          float xdata K_0, K_1, t_0, t_1;
+  36          float xdata Pdot[4] ={0,0,0,0};
+  37          float xdata PP[2][2] = { { 1, 0 },{ 0, 1 } };   
+  38          
+  39           void delay1ms()
+  40           {
+  41   1         uchar i,j;   
+  42   1         for(i=0;i<10;i++)
+  43   1         for(j=0;j<33;j++)
+  44   1                 ;             
+  45   1        }
+  46          void delaynms(uchar n)
+  47           {
+  48   1         uchar i;
+  49   1         for(i=0;i<n;i++) delay1ms();
+  50   1      
+  51   1       }
+  52          
+  53          
+  54          void display(uchar x,uchar y,uchar *seg)        //x为行号,y为列号
+C51 COMPILER V8.02   KALMAN                                                                12/15/2013 11:12:32 PAGE 2   
+
+  55          {
+  56   1              uchar i;
+  57   1              uint t=0;
+  58   1              switch(x)                                       //确定行号
+  59   1              {
+  60   2                      case 1: i=0x80; break;                          //第一行
+  61   2                      case 2: i=0x90; break;                          //第二行
+  62   2                      case 3: i=0x88; break;                          //第三行
+  63   2                      case 4: i=0x98; break;                          //第四行
+  64   2                      default : break;
+  65   2              }
+  66   1              i=i+y-1;                                //确定列号
+  67   1              write_com(i);
+  68   1              while(seg[t]!='\0')
+  69   1              {
+  70   2                      write_data(seg[t]);     //写入需要显示字符的显示码
+  71   2                      t++;
+  72   2              }
+  73   1      }
+  74          
+  75          
+  76          void lcd_printf(uchar *s,int temp_data)
+  77          {
+  78   1              if(temp_data<0)
+  79   1              {
+  80   2                      temp_data=-temp_data;
+  81   2                      *s='-';
+  82   2              }
+  83   1              else *s=' ';
+  84   1              *++s =temp_data/100+0x30;
+  85   1              temp_data=temp_data%100;     //取余运算
+  86   1              *++s =temp_data/10+0x30;
+  87   1              temp_data=temp_data%10;      //取余运算
+  88   1              *++s =temp_data+0x30;   
+  89   1      }
+  90          
+  91          void DisplayOneChar(uchar X,uchar Y,uchar DData)
+  92          {                                               
+  93   1              Y&=1;                                           
+  94   1              X&=15;                                          
+  95   1              if(Y)X|=0x40;                                   
+  96   1              X|=0x80;                        
+  97   1              write_com(X);           
+  98   1              write_data(DData);              
+  99   1      }
+ 100          
+ 101          void DisplayListChar(uchar X,uchar Y,uchar *DData,L)
+ 102          {
+ 103   1              uchar ListLength=0; 
+ 104   1              Y&=0x1;                
+ 105   1              X&=0xF;                
+ 106   1              while(L--)             
+ 107   1              {                       
+ 108   2                      DisplayOneChar(X,Y,DData[ListLength]);
+ 109   2                      ListLength++;  
+ 110   2                      X++;                        
+ 111   2              }    
+ 112   1      }
+ 113          
+ 114          void Display10BitData(int value,uchar x,uchar y)
+ 115          {
+ 116   1          
+C51 COMPILER V8.02   KALMAN                                                                12/15/2013 11:12:32 PAGE 3   
+
+ 117   1              lcd_printf(dis, value);                 //转换数据显示
+ 118   1              DisplayListChar(x,y,dis,4);     //启始列，行，显示数组，显示长度
+ 119   1      }
+ 120          
+ 121          
+ 122          //*********************************************************
+ 123          // 卡尔曼滤波
+ 124          //*********************************************************
+ 125          
+ 126          //Kalman滤波，20MHz的处理时间约0.77ms；
+ 127          
+ 128          float Kalman_Filter(float Accel,float Gyro)             
+ 129          {
+ 130   1              Angle+=(Gyro - Q_bias) * dt; //先验估计
+ 131   1      
+ 132   1              
+ 133   1              Pdot[0]=Q_angle - PP[0][1] - PP[1][0]; // Pk-先验估计误差协方差的微分
+ 134   1      
+ 135   1              Pdot[1]=- PP[1][1];
+ 136   1              Pdot[2]=- PP[1][1];
+ 137   1              Pdot[3]=Q_gyro;
+ 138   1              
+ 139   1              PP[0][0] += Pdot[0] * dt;   // Pk-先验估计误差协方差微分的积分
+ 140   1              PP[0][1] += Pdot[1] * dt;   // =先验估计误差协方差
+ 141   1              PP[1][0] += Pdot[2] * dt;
+ 142   1              PP[1][1] += Pdot[3] * dt;
+ 143   1                      
+ 144   1              Angle_err = Accel - Angle;      //zk-先验估计
+ 145   1              
+ 146   1              PCt_0 = C_0 * PP[0][0];
+ 147   1              PCt_1 = C_0 * PP[1][0];
+ 148   1              
+ 149   1              E = R_angle + C_0 * PCt_0;
+ 150   1              
+ 151   1              K_0 = PCt_0 / E;
+ 152   1              K_1 = PCt_1 / E;
+ 153   1              
+ 154   1              t_0 = PCt_0;
+ 155   1              t_1 = C_0 * PP[0][1];
+ 156   1      
+ 157   1              PP[0][0] -= K_0 * t_0;           //后验估计误差协方差
+ 158   1              PP[0][1] -= K_0 * t_1;
+ 159   1              PP[1][0] -= K_1 * t_0;
+ 160   1              PP[1][1] -= K_1 * t_1;
+ 161   1                      
+ 162   1              Angle   += K_0 * Angle_err;      //后验估计
+ 163   1              Q_bias  += K_1 * Angle_err;      //后验估计
+ 164   1              Gyro_y   = Gyro - Q_bias;        //输出值(后验估计)的微分=角速度
+ 165   1               return  Gyro_y;
+ 166   1      }        
+ 167          
+ 168          
+ 169          
+ 170          
+ 171          
+ 172          
+ 173          
+ 174          //*********************************************************
+ 175          // 倾角计算（卡尔曼融合）
+ 176          //*********************************************************
+ 177          
+ 178          void Angle_Calcu(void)   
+C51 COMPILER V8.02   KALMAN                                                                12/15/2013 11:12:32 PAGE 4   
+
+ 179          {
+ 180   1              float Gyro_y;        //Y轴陀螺仪数据暂存
+ 181   1              //float Angle_gy;      //由角速度计算的倾斜角度
+ 182   1              float Accel_x;       //X轴加速度值暂存
+ 183   1              float Angle_ax;      //由加速度计算的倾斜角度
+ 184   1              //float Angle;         //小车最终倾斜角度
+ 185   1              //uchar value;           //角度正负极性标记     
+ 186   1      
+ 187   1      
+ 188   1              //------加速度--------------------------
+ 189   1      
+ 190   1              //范围为2g时，换算关系：16384 LSB/g
+ 191   1              //角度较小时，x=sinx得到角度（弧度）, deg = rad*180/3.14
+ 192   1              //因为x>=sinx,故乘以1.3适当放大
+ 193   1      
+ 194   1              Accel_x  = GetData(ACCEL_XOUT_H);         //读取X轴加速度
+ 195   1              Angle_ax = (Accel_x - 1100) /16384;   //去除零点偏移,计算得到角度（弧度）
+ 196   1              Angle_ax = Angle_ax*1.4*180/3.14;     //弧度转换为度,
+ 197   1      
+ 198   1              //Display10BitData(Angle_ax,2,1);
+ 199   1      
+ 200   1          //-------角速度-------------------------
+ 201   1      
+ 202   1              //范围为2000deg/s时，换算关系：16.4 LSB/(deg/s)
+ 203   1        
+ 204   1              Gyro_y = GetData(GYRO_YOUT_H);        //静止时角速度Y轴输出为-30左右
+ 205   1              Gyro_y = -(Gyro_y + 30)/16.4;         //去除零点偏移，计算角速度值,负号为方向处理 
+ 206   1              //Angle_gy = Angle_gy + Gyro_y*0.01;  //角速度积分得到倾斜角度.   
+ 207   1              
+ 208   1              //Display10BitData(Gyro_y,8,1);         
+ 209   1      
+ 210   1              //-------卡尔曼滤波融合-----------------------
+ 211   1      
+ 212   1              //Kalman_Filter(Angle_ax,Gyro_y);       //卡尔曼滤波计算倾角
+ 213   1                        
+ 214   1              Display10BitData(Kalman_Filter(Angle_ax,Gyro_y),2,1);
+ 215   1              /*//-------互补滤波-----------------------
+ 216   1      
+ 217   1              //补偿原理是取当前倾角和加速度获得倾角差值进行放大，然后与
+ 218   1          //陀螺仪角速度叠加后再积分，从而使倾角最跟踪为加速度获得的角度
+ 219   1              //0.5为放大倍数，可调节补偿度；0.01为系统周期10ms       
+ 220   1                      
+ 221   1              Angle = Angle + (((Angle_ax-Angle)*0.5 + Gyro_y)*0.01);*/
+ 222   1                                                                                                                                
+ 223   1      } 
+ 224          
+ 225          
+ 226          void display_temp()
+ 227          { 
+ 228   1              Temp_h=Single_ReadI2C(TEMP_OUT_H); //读取温度
+ 229   1              Temp_l=Single_ReadI2C(TEMP_OUT_L); //读取温度
+ 230   1              Temperature=Temp_h<<8|Temp_l;     //合成温度
+ 231   1              Temperature = 36.53+ ((double)Temperature) / 340; // 计算出温度
+ 232   1              lcd_printf(dis,Temperature);     //转换数据显示
+ 233   1              display(1,1,dis);     //启始列，行，显示数组，显示位数
+ 234   1      }
+ 235           
+ 236          
+ 237          //*********************************************************
+ 238          //main
+ 239          //*********************************************************
+ 240          void main()
+C51 COMPILER V8.02   KALMAN                                                                12/15/2013 11:12:32 PAGE 5   
+
+ 241          { 
+ 242   1          delaynms(500);
+ 243   1              init_1602();
+ 244   1              delaynms(500);     //上电延时
+ 245   1              InitMPU6050();     //初始化MPU6050
+ 246   1              delaynms(500);   
+ 247   1              while(1)
+ 248   1              {
+ 249   2                 
+ 250   2               Angle_Calcu(); 
+ 251   2               display_temp();         
+ 252   2      
+ 253   2              }
+ 254   1      }
+ 255          
+ 256          
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   2118    ----
+   CONSTANT SIZE    =     17    ----
+   XDATA SIZE       =     68    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =     31      42
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----       1
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

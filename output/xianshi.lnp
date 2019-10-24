@@ -1,0 +1,4 @@
+".\output\lcd.obj",
+".\output\xianshi.obj" 
+TO ".\output\xianshi" 
+PRINT(".\output\xianshi.m51") RAMSIZE(256) 
